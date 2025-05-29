@@ -1,4 +1,4 @@
-function Invoke-PipelineOperation {
+﻿function Invoke-PipelineOperation {
     <#
     .SYNOPSIS
         Executes credential operations with pipeline support and consistent error handling

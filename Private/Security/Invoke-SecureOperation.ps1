@@ -1,79 +1,6 @@
-# PSCredentialStore - Cross-platform PowerShell credential management module
+﻿# PSCredentialStore - Cross-platform PowerShell credential management module
 # Copyright (c) 2025 PSCredentialStore Contributors
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
-
-function Invoke-SecureOperation {
-    <#
-    .SYNOPSIS
-        Executes credential operations with security context and memory cleanup
-    .DESCRIPTION
-        Provides secure execution context for credential operations with proper
-        memory cleanup and security validations
-    .PARAMETER ScriptBlock
-        The script block to execute securely
-    .PARAMETER Variables
-        Variables to make available in the secure context
-    .PARAMETER TimeoutSeconds
-        Maximum execution time in seconds
-    .OUTPUTS
-        The result of the script block execution
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [scriptblock]$ScriptBlock,
-        
-        [Parameter()]
-        [string[]]$Variables = @(),
-        
-        [Parameter()]
-        [ValidateRange(1, 300)]
-        [int]$TimeoutSeconds = 30
-    )
-    
-    try {
-        # Create secure execution context
-        $secureContext = @{}
-        
-        # Add specified variables to context
-        foreach ($varName in $Variables) {
-            if (Get-Variable -Name $varName -Scope 1 -ErrorAction SilentlyContinue) {
-                $secureContext[$varName] = Get-Variable -Name $varName -Scope 1 -ValueOnly
-            }
-        }
-        
-        # Execute with timeout
-        $job = Start-Job -ScriptBlock {
-            param($ScriptBlock, $Context)
-            
-            # Import variables into job context
-            foreach ($key in $Context.Keys) {
-                Set-Variable -Name $key -Value $Context[$key]
-            }
-            
-            # Execute the script block
-            & $ScriptBlock
-        } -ArgumentList $ScriptBlock, $secureContext
-        
-        $result = Wait-Job -Job $job -Timeout $TimeoutSeconds | Receive-Job
-        Remove-Job -Job $job -Force
-        
-        return $result
-    }
-    finally {
-        # Clear sensitive variables from memory
-        foreach ($varName in $Variables) {
-            if (Get-Variable -Name $varName -Scope 1 -ErrorAction SilentlyContinue) {
-                Remove-Variable -Name $varName -Scope 1 -Force -ErrorAction SilentlyContinue
-            }
-        }
-        
-        # Force garbage collection for sensitive data cleanup
-        [System.GC]::Collect()
-        [System.GC]::WaitForPendingFinalizers()
-        [System.GC]::Collect()
-    }
-}
 
 function Invoke-WithRetry {
     <#
@@ -82,18 +9,6 @@ function Invoke-WithRetry {
     .DESCRIPTION
         Provides robust retry mechanism for credential operations that may fail due to 
         temporary issues like OS credential store locks or network problems
-    .PARAMETER ScriptBlock
-        The script block to execute
-    .PARAMETER MaxRetries
-        Maximum number of retry attempts (default: 3)
-    .PARAMETER InitialDelayMs
-        Initial delay in milliseconds before first retry (default: 100)
-    .PARAMETER MaxDelayMs
-        Maximum delay in milliseconds between retries (default: 5000)
-    .PARAMETER RetryCondition
-        Script block that determines if the error should trigger a retry
-    .OUTPUTS
-        The result of the successful script block execution
     #>
     [CmdletBinding()]
     param(
@@ -136,80 +51,121 @@ function Invoke-WithRetry {
             Write-Verbose "Operation failed (attempt $attempt/$($MaxRetries + 1)). Retrying after ${delay}ms. Error: $($_.Exception.Message)"
             Start-Sleep -Milliseconds $delay
             
-            # Exponential backoff with jitter
-            $delay = [Math]::Min($delay * 2 + (Get-Random -Maximum 100), $MaxDelayMs)
+            # Exponential backoff with jitter to prevent thundering herd
+            $jitterMs = Get-Random -Maximum 100
+            $delay = [Math]::Min(($delay * 2) + $jitterMs, $MaxDelayMs)
         }
     } while ($attempt -le $MaxRetries)
+    
+    # This should never be reached due to the throw in the catch block
+    throw "Maximum retry attempts exceeded without success"
 }
 
 function Test-CredentialStoreAccess {
     <#
     .SYNOPSIS
-        Validates access to the credential store
+        Validates access to the credential store for the specified operation type
     .DESCRIPTION
         Checks if the current user has appropriate permissions to perform credential operations
-    .PARAMETER Operation
-        The type of operation to validate (Read, Write, Delete)
+        on the native credential store. Provides platform-specific validation and helpful
+        error messages when access is denied.
+    .PARAMETER OperationType
+        The type of operation to validate access for
     .OUTPUTS
-        [bool] True if access is available
+        [bool] True if access is available for the specified operation
     #>
     [CmdletBinding()]
     [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet('Read', 'Write', 'Delete')]
-        [string]$Operation
+        [string]$OperationType
     )
     
     try {
-        $platform = Get-OSPlatform
+        $currentPlatform = Get-OSPlatform
+        Write-Verbose "Validating credential store access for '$OperationType' operation on platform '$currentPlatform'"
         
-        switch ($platform) {
+        switch ($currentPlatform) {
             'Windows' {
-                # On Windows, most users can access their credential manager
-                # Check if we're in a restricted environment
+                # On Windows, validate Windows identity and credential manager access
                 try {
-                    $null = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+                    $windowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+                    if ($null -eq $windowsIdentity) {
+                        Write-Warning "Unable to determine Windows identity. Credential operations may fail."
+                        return $false
+                    }
+                    
+                    # Test basic credential manager access by attempting to enumerate
+                    if ($OperationType -in @('Read', 'Write', 'Delete')) {
+                        try {
+                            $null = Microsoft.PowerShell.Security\Get-StoredCredential -ErrorAction Stop
+                        }
+                        catch [System.ComponentModel.Win32Exception] {
+                            Write-Warning "Windows Credential Manager is not accessible. Error: $($_.Exception.Message)"
+                            return $false
+                        }
+                        catch {
+                            # Other errors might be normal (like no credentials found)
+                            Write-Verbose "Credential Manager access test completed with non-critical error: $($_.Exception.Message)"
+                        }
+                    }
+                    
                     return $true
                 }
+                catch [System.Security.SecurityException] {
+                    Write-Warning "Insufficient security permissions for Windows Credential Manager access. Try running as administrator."
+                    return $false
+                }
                 catch {
-                    Write-Warning "Unable to access Windows identity. Credential operations may fail."
+                    Write-Warning "Unexpected error validating Windows credential store access: $($_.Exception.Message)"
                     return $false
                 }
             }
             'MacOS' {
-                # Check keychain access
+                # Check keychain accessibility using security command
                 try {
-                    $result = security list-keychains 2>$null
-                    return $null -ne $result
+                    $keychainListResult = security list-keychains 2>$null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Warning "Unable to access macOS Keychain. The keychain may be locked or inaccessible."
+                        return $false
+                    }
+                    
+                    if ($null -eq $keychainListResult) {
+                        Write-Warning "No keychains found. macOS Keychain may not be properly configured."
+                        return $false
+                    }
+                    
+                    # For write operations, test if we can access the default keychain
+                    if ($OperationType -in @('Write', 'Delete')) {
+                        try {
+                            $defaultKeychainResult = security default-keychain 2>$null
+                            if ($LASTEXITCODE -ne 0) {
+                                Write-Warning "Cannot access default keychain for write operations. The keychain may be locked."
+                                return $false
+                            }
+                        }
+                        catch {
+                            Write-Warning "Error accessing default keychain: $($_.Exception.Message)"
+                            return $false
+                        }
+                    }
+                    
+                    return $true
                 }
                 catch {
-                    Write-Warning "Unable to access macOS Keychain. You may need to unlock your keychain."
+                    Write-Warning "Error validating macOS Keychain access: $($_.Exception.Message). Ensure the 'security' command is available."
                     return $false
                 }
-            }
-            'Linux' {
-                # Check if secret-tool is available and D-Bus session exists
-                if (-not (Get-Command secret-tool -ErrorAction SilentlyContinue)) {
-                    Write-Warning "secret-tool not found. Please install libsecret-tools package."
-                    return $false
-                }
-                
-                if (-not $env:DBUS_SESSION_BUS_ADDRESS) {
-                    Write-Warning "No D-Bus session found. Credential operations may fail."
-                    return $false
-                }
-                
-                return $true
             }
             default {
-                Write-Warning "Unknown platform: $platform"
+                Write-Warning "Unsupported platform for credential store access validation: $currentPlatform. This module supports Windows and macOS only."
                 return $false
             }
         }
     }
     catch {
-        Write-Warning "Failed to validate credential store access: $($_.Exception.Message)"
+        Write-Warning "Unexpected error during credential store access validation: $($_.Exception.Message)"
         return $false
     }
 }

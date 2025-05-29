@@ -1,4 +1,4 @@
-# PSCredentialStore - PowerShell credential management module for macOS
+﻿# PSCredentialStore - PowerShell credential management module for macOS
 # Copyright (c) 2025 PSCredentialStore Contributors
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
 

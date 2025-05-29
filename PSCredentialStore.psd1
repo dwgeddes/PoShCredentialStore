@@ -1,4 +1,4 @@
-@{
+﻿@{
     # Module identification
     RootModule = 'PSCredentialStore.psm1'
     ModuleVersion = '1.0.0'
@@ -13,7 +13,7 @@
     # PowerShell requirements
     PowerShellVersion = '7.0'
     
-    # Functions to export - matches Public folder exactly
+    # Functions to export - matches Public folder, Get-StoredCredentialPlainText removed in API v2
     FunctionsToExport = @(
         'Get-StoredCredential',
         'New-StoredCredential', 

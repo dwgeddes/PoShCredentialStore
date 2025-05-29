@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param (
     [Parameter()]
     [switch]$SkipIntegrationTests,
@@ -7,7 +7,10 @@ param (
     [switch]$CodeCoverage,
     
     [Parameter()]
-    [string[]]$Tag
+    [string[]]$Tag = @(),
+    
+    [Parameter()]
+    [switch]$CleanupLegacyTests
 )
 
 # Check for PowerShell version
@@ -25,22 +28,72 @@ if (-not (Get-Module -Name Pester -ListAvailable | Where-Object { $_.Version -ge
 # Import Pester
 Import-Module Pester -MinimumVersion 5.0 -Force
 
+# Handle cleanup of legacy test files if requested
+if ($CleanupLegacyTests) {
+    Write-Host "Cleaning up legacy test files..." -ForegroundColor Yellow
+    $legacyFiles = @(
+        "ActualBugTest.Tests.ps1",
+        "BugFixed.Tests.ps1", 
+        "Get-StoredCredentialPlainText.Tests.ps1",
+        "PipelineIntegration.Tests.ps1",
+        "PSCredentialStore.Tests.ps1",
+        "RealBugCatch.Tests.ps1",
+        "RealIntegration.Tests.ps1"
+    )
+    
+    foreach ($file in $legacyFiles) {
+        $filePath = Join-Path $PSScriptRoot $file
+        if (Test-Path $filePath) {
+            Write-Host "  Removing: $file" -ForegroundColor Gray
+            Remove-Item $filePath -Force
+        }
+    }
+    Write-Host "Legacy test cleanup complete." -ForegroundColor Green
+    return
+}
+
+# Define organized test files in execution order
+$organizedTests = @(
+    "01-Module.Tests.ps1",
+    "02-CoreFunctions.Tests.ps1", 
+    "03-PlainTextFunction.Tests.ps1",
+    "04-MacOSPlatform.Tests.ps1",
+    "05-Integration.Tests.ps1",
+    "06-Advanced.Tests.ps1"
+)
+
+# Verify all organized test files exist
+$missingTests = @()
+foreach ($testFile in $organizedTests) {
+    if (-not (Test-Path (Join-Path $PSScriptRoot $testFile))) {
+        $missingTests += $testFile
+    }
+}
+
+if ($missingTests) {
+    Write-Warning "Missing organized test files: $($missingTests -join ', ')"
+    Write-Host "Using all available test files instead..." -ForegroundColor Yellow
+    $testPath = $PSScriptRoot
+} else {
+    Write-Host "Running organized test suite..." -ForegroundColor Green
+    $testPath = $organizedTests | ForEach-Object { Join-Path $PSScriptRoot $_ }
+}
+
 # Set Pester configuration with PS7 improvements
 $PesterConfig = [PesterConfiguration]::Default
-$PesterConfig.Run.Path = "$PSScriptRoot"
+$PesterConfig.Run.Path = $testPath
 $PesterConfig.Run.Exit = $true
-$PesterConfig.TestResult.Enabled = $false   # Disable XML output
-# $PesterConfig.TestResult.OutputPath = "$PSScriptRoot/TestResults.xml" # Remove this line
+$PesterConfig.TestResult.Enabled = $false
 $PesterConfig.Output.Verbosity = "Detailed"
 
 # Handle tag filters
-if ($Tag) {
+if ($Tag.Count -gt 0) {
     Write-Host "Running only tests with tag(s): $($Tag -join ', ')" -ForegroundColor Yellow
     $PesterConfig.Filter.Tag = $Tag
 }
 # Handle integration tests
 elseif ($SkipIntegrationTests) {
-    Write-Host "Skipping integration tests..." -ForegroundColor Yellow
+    Write-Host "Skipping integration and advanced tests..." -ForegroundColor Yellow
     $PesterConfig.Filter.Tag = @("Unit")
 }
 
@@ -57,3 +110,5 @@ if ($CodeCoverage) {
 
 # Run the tests using PS7's improved Pester integration
 Invoke-Pester -Configuration $PesterConfig
+
+# PSScriptAnalyzer disable=PSAvoidUsingConvertToSecureStringWithPlainText,PSAvoidUsingWriteHost,PSAvoidUsingCmdletAliases,PSReviewUnusedParameter

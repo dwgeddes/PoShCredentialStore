@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 
 # PSCredentialStore - Cross-platform PowerShell credential management module
 # Copyright (c) 2025 PSCredentialStore Contributors

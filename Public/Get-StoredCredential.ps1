@@ -1,4 +1,4 @@
-# PSCredentialStore - PowerShell credential management module for macOS
+﻿# PSCredentialStore - PowerShell credential management module for macOS
 # Copyright (c) 2025 PSCredentialStore Contributors
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
@@ -9,34 +9,52 @@ function Get-StoredCredential {
     .DESCRIPTION
         Gets previously saved credentials from the platform's native credential store.
         When run without a Name parameter, returns all stored credentials.
-        Supports pipeline input for retrieving multiple specific credentials.
+        Returns credential objects with Username and Password (SecureString) properties.
+        Use -AsCredential to get PSCredential objects directly.
+        Use -AsPlainText to get passwords as plain text (security warning will be shown).
     .PARAMETER Name
         The unique name(s) of credential(s) to retrieve. If not specified, all credentials are returned.
         Supports pipeline input and arrays for bulk operations.
+    .PARAMETER AsCredential
+        Return credentials as PSCredential objects instead of the default object structure.
+        Cannot be used with -AsPlainText.
+    .PARAMETER AsPlainText
+        Return credentials with passwords in plain text format. Use with extreme caution.
+        Cannot be used with -AsCredential.
     .PARAMETER Force
         Continue processing even if some credential names are invalid or inaccessible
     .EXAMPLE
         Get-StoredCredential -Name "MyApp"
-        # Retrieves the credential named "MyApp"
+        # Retrieves the credential with SecureString password
+    .EXAMPLE
+        Get-StoredCredential -Name "MyApp" -AsCredential
+        # Returns a PSCredential object
+    .EXAMPLE
+        Get-StoredCredential -Name "MyApp" -AsPlainText
+        # Returns credential with plain text password (shows security warning)
     .EXAMPLE
         Get-StoredCredential
-        # Lists all stored credentials
+        # Lists all stored credentials with SecureString passwords
     .EXAMPLE
-        "App1", "App2", "App3" | Get-StoredCredential
-        # Retrieves multiple credentials via pipeline
-    .EXAMPLE
-        Get-StoredCredential -Name "InvalidName" -Force
-        # Attempts to retrieve credential, continues on validation errors
+        "App1", "App2", "App3" | Get-StoredCredential -AsCredential
+        # Retrieves multiple credentials as PSCredential objects via pipeline
     .OUTPUTS
-        [PSCustomObject] Single credential object when Name is specified
-        [PSCustomObject[]] Array of credential objects when listing all or multiple credentials
+        [PSCustomObject] Default: credential object with Name, Username, Password (SecureString), Metadata
+        [PSCredential] When -AsCredential is used
+        [PSCustomObject] When -AsPlainText is used: includes plain text Password property
     #>
-    [CmdletBinding()]
-    [OutputType([PSCustomObject], [PSCustomObject[]])]
+    [CmdletBinding(DefaultParameterSetName = 'Default')]
+    [OutputType([PSCustomObject], [PSCredential])]
     param (
         [Parameter(Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
         [string[]]$Name,
+        
+        [Parameter(ParameterSetName = 'AsCredential')]
+        [switch]$AsCredential,
+        
+        [Parameter(ParameterSetName = 'AsPlainText')]
+        [switch]$AsPlainText,
         
         [Parameter()]
         [switch]$Force
@@ -53,13 +71,23 @@ function Get-StoredCredential {
     }
     
     process {
+        # Pipeline null input: skip processing
+        if ($null -eq $Name) { return @() }
+
         if ($Name -and $Name.Count -gt 0) {
             $hasProcessedNames = $true
             Write-Verbose "Processing $($Name.Count) credential name(s) from pipeline"
             
             $operationScript = {
-                param($Name, $Credential, $Provider, $Index, $Force, $Detailed)
-                
+                param(
+                    [string]$Name,
+                    [System.Management.Automation.PSCredential]$Credential,
+                    [object]$Provider,
+                    [int]$Index,
+                    [switch]$Force,
+                    [bool]$Detailed
+                )
+
                 # Validate credential name unless Force is specified
                 if (-not $Force) {
                     $validation = Test-CredentialId -CredentialIdentifier $Name
@@ -80,7 +108,36 @@ function Get-StoredCredential {
                     return $credential
                 }
                 
-                return Invoke-WithRetry -ScriptBlock $retrieveScript -MaxRetries 2
+                $rawCredential = Invoke-WithRetry -ScriptBlock $retrieveScript -MaxRetries 2
+                
+                # Convert to new object structure based on what was stored
+                Write-Verbose "Raw credential structure for '$Name': HasCredential=$($null -ne $rawCredential.Credential), HasUsername=$($null -ne $rawCredential.Username), HasPassword=$($null -ne $rawCredential.Password), HasMetadata=$($null -ne $rawCredential.Metadata)"
+                
+                if ($rawCredential.Metadata -and $rawCredential.Metadata['_CredentialStructure'] -eq 'NewAPI') {
+                    # New API format stored with legacy provider
+                    Write-Verbose "Converting stored credential to new API format for '$Name'"
+                    $credentialObject = ConvertTo-CredentialObject -Name $Name -PSCredential $rawCredential.Credential -Metadata $rawCredential.Metadata
+                } elseif ($rawCredential.Credential) {
+                    # Legacy format (may have additional properties)
+                    Write-Verbose "Converting legacy credential format for '$Name'"
+                    $credentialObject = ConvertTo-CredentialObject -Name $Name -PSCredential $rawCredential.Credential -Metadata ($rawCredential.Metadata ?? @{})
+                } elseif ($rawCredential.Username -and $rawCredential.Password) {
+                    # Pure new format (future provider compatibility)
+                    Write-Verbose "Using native new format for '$Name'"
+                    $credentialObject = $rawCredential
+                } else {
+                    $structureDetails = "Properties: $($rawCredential | Get-Member -MemberType Properties | ForEach-Object Name)"
+                    throw [System.InvalidOperationException]::new("Credential '$Name' has unrecognized structure. $structureDetails")
+                }
+                
+                # Apply output format conversion
+                if ($AsCredential) {
+                    return ConvertFrom-CredentialObject -CredentialObject $credentialObject -AsCredential
+                } elseif ($AsPlainText) {
+                    return ConvertFrom-CredentialObject -CredentialObject $credentialObject -AsPlainText
+                } else {
+                    return ConvertFrom-CredentialObject -CredentialObject $credentialObject
+                }
             }
             
             $results = Invoke-PipelineOperation -Operation 'Get' -Names $Name -ScriptBlock $operationScript -InitializeProvider -ValidateAccess 'Read' -Force:$Force
@@ -145,7 +202,35 @@ function Get-StoredCredential {
                     return @()
                 }
                 
-                return $allCredentials
+                # Convert all credentials and apply format
+                $convertedCredentials = @()
+                foreach ($cred in $allCredentials) {
+                    try {
+                        # Convert legacy format if needed
+                        if ($cred.Credential -and -not $cred.Username) {
+                            Write-Verbose "Converting legacy credential format for '$($cred.Name)'"
+                            $credentialObject = ConvertTo-CredentialObject -Name $cred.Name -PSCredential $cred.Credential -Metadata ($cred.Metadata ?? @{})
+                        } elseif ($cred.Username -and $cred.Password) {
+                            # Already in new format
+                            $credentialObject = $cred
+                        } else {
+                            Write-Warning "Skipping credential '$($cred.Name)' - invalid structure"
+                            continue
+                        }
+                        
+                        # Apply output format
+                        $formattedCred = ConvertFrom-CredentialObject -CredentialObject $credentialObject -AsCredential:$AsCredential -AsPlainText:$AsPlainText
+                        $convertedCredentials += $formattedCred
+                    }
+                    catch {
+                        Write-Warning "Failed to process credential '$($cred.Name)': $($_.Exception.Message)"
+                        if (-not $Force) {
+                            throw
+                        }
+                    }
+                }
+                
+                return $convertedCredentials
             }
             
             # Return results from pipeline processing
@@ -156,17 +241,9 @@ function Get-StoredCredential {
             }
         }
         catch {
-            Write-Verbose "Error in Get-StoredCredential: $($_.Exception.Message)"
-            
-            # Ensure we have proper error handling functions available
-            if (Get-Command Get-CredentialStoreErrorDetails -ErrorAction SilentlyContinue) {
-                $errorDetails = Get-CredentialStoreErrorDetails -ThrownException $_.Exception -OperationType 'Get' -CredentialIdentifier $Name
-                $errorRecord = New-CredentialStoreError -Exception $_.Exception -ErrorId $errorDetails.ErrorIdentifier -Category $errorDetails.ErrorCategory -TargetObject $Name -RecommendedAction $errorDetails.RecommendedUserAction
-                $PSCmdlet.ThrowTerminatingError($errorRecord)
-            } else {
-                # Fallback error handling
-                Write-Error "Failed to retrieve credentials: $($_.Exception.Message)" -ErrorAction Stop
-            }
+            Write-Error "Failed to retrieve credentials: $($_.Exception.Message)"
+            # Return empty array on error to match Get-* conventions
+            return @()
         }
     }
 }
