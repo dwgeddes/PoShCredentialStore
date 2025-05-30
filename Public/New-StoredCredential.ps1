@@ -64,7 +64,10 @@ function New-StoredCredential {
         [string]$Application,
         
         [Parameter()]
-        [hashtable]$Metadata = @{}
+        [hashtable]$Metadata = @{},
+        
+        [Parameter()]
+        [switch]$NonInteractive
     )
 
     begin {
@@ -80,8 +83,11 @@ function New-StoredCredential {
             # Create credential object from input parameters
             $credentialObject = $null
             if ($PSCmdlet.ParameterSetName -eq 'PSCredential') {
-                # Prompt for credential if not provided
+                # Handle missing credential based on NonInteractive flag
                 if (-not $Credential) {
+                    if ($NonInteractive) {
+                        throw "Credential is required when NonInteractive flag is specified"
+                    }
                     $Credential = Get-Credential -Message "Enter credentials for '$Name'"
                     if (-not $Credential) {
                         Write-Error "Credential is required to create stored credential"

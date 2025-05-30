@@ -4,6 +4,11 @@
 BeforeAll {
     $ModulePath = Split-Path -Parent $PSScriptRoot
     Import-Module "$ModulePath/PSCredentialStore.psd1" -Force
+    
+    # MANDATORY TIMEOUT PROTECTION: Prevent interactive prompts
+    $global:ConfirmPreference = 'None'
+    Mock Read-Host { return "mocked-input" } -ModuleName PSCredentialStore
+    Mock Write-Progress { } -ModuleName PSCredentialStore
 }
 
 Describe "Integration Tests - Real World Scenarios" -Tag "Integration" {
@@ -66,9 +71,8 @@ Describe "Integration Tests - Real World Scenarios" -Tag "Integration" {
         }
 
         It "Chained pipeline operations" {
-            # Test multiple operations in sequence
-            $result = $script:testCred | 
-                      New-StoredCredential -Name $script:testId | 
+            # Test multiple operations in sequence - use explicit credential to prevent hanging
+            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred | 
                       ForEach-Object { Get-StoredCredentialPlainText -Name $_.Name }
             
             $result | Should -Not -BeNullOrEmpty

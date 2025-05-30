@@ -31,7 +31,7 @@ Describe "Platform-Specific Tests" -Tag "Platform" {
         }
 
         It "Should store and retrieve credentials in macOS keychain" -Skip:(-not $IsMacOS) {
-            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred
+            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             $retrieved = Get-StoredCredential -Name $script:testId
@@ -41,7 +41,7 @@ Describe "Platform-Specific Tests" -Tag "Platform" {
         }
 
         It "Should handle keychain service name prefixing" -Skip:(-not $IsMacOS) {
-            New-StoredCredential -Name $script:testId -Credential $script:testCred | Out-Null
+            New-StoredCredential -Name $script:testId -Credential $script:testCred -NonInteractive | Out-Null
             
             # Directly query keychain to verify service name format
             $serviceName = "PSCredentialStore:$script:testId"
@@ -53,7 +53,7 @@ Describe "Platform-Specific Tests" -Tag "Platform" {
     Context "Cross-Platform Path Handling" {
         It "Should use cross-platform path operations" {
             # Test that our functions use proper path handling
-            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred
+            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             # Verify credential can be retrieved (implies proper path handling)
@@ -79,7 +79,7 @@ Describe "Advanced Metadata Handling" -Tag "Advanced", "Metadata" {
 
     Context "Metadata Storage and Retrieval" {
         It "Should store and retrieve basic metadata" {
-            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred
+            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             $result.Metadata | Should -Not -BeNull
         }
@@ -93,7 +93,7 @@ Describe "Advanced Metadata Handling" -Tag "Advanced", "Metadata" {
                 CustomField = "Custom value with unicode: 测试"
             }
             
-            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred
+            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             $retrieved = Get-StoredCredential -Name $script:testId
@@ -106,7 +106,7 @@ Describe "Advanced Metadata Handling" -Tag "Advanced", "Metadata" {
             $unicodeTestId = "测试_$(Get-Random)"
             
             try {
-                $result = New-StoredCredential -Name $unicodeTestId -Credential $script:testCred
+                $result = New-StoredCredential -Name $unicodeTestId -Credential $script:testCred -NonInteractive
                 $result | Should -Not -BeNullOrEmpty
                 
                 $retrieved = Get-StoredCredential -Name $unicodeTestId
@@ -121,7 +121,7 @@ Describe "Advanced Metadata Handling" -Tag "Advanced", "Metadata" {
             $specialPassword = ConvertTo-SecureString "Spec!@l#P@ssw0rd$%^&*()_+{}|:<>?`~" -AsPlainText -Force
             $specialCred = [PSCredential]::new($script:testUser, $specialPassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $specialCred
+            $result = New-StoredCredential -Name $script:testId -Credential $specialCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             $retrieved = Get-StoredCredential -Name $script:testId -AsPlainText
@@ -146,18 +146,18 @@ Describe "Edge Cases and Error Conditions" -Tag "EdgeCases" {
 
     Context "Empty and Null Handling" {
         It "Should reject empty credential names" {
-            { New-StoredCredential -Name "" -Credential $script:testCred } | Should -Throw
+            { New-StoredCredential -Name "" -Credential $script:testCred -NonInteractive } | Should -Throw
         }
 
         It "Should reject null credential objects" {
-            { New-StoredCredential -Name $script:testId -Credential $null } | Should -Throw
+            { New-StoredCredential -Name $script:testId -Credential $null -NonInteractive } | Should -Throw
         }
 
         It "Should handle empty SecureString passwords gracefully" {
             $emptyPassword = ConvertTo-SecureString "" -AsPlainText -Force
             $emptyCred = [PSCredential]::new($script:testUser, $emptyPassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $emptyCred
+            $result = New-StoredCredential -Name $script:testId -Credential $emptyCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             $retrieved = Get-StoredCredential -Name $script:testId -AsPlainText
@@ -171,7 +171,7 @@ Describe "Edge Cases and Error Conditions" -Tag "EdgeCases" {
             $longSecurePassword = ConvertTo-SecureString $longPassword -AsPlainText -Force
             $longCred = [PSCredential]::new($script:testUser, $longSecurePassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $longCred
+            $result = New-StoredCredential -Name $script:testId -Credential $longCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             $retrieved = Get-StoredCredential -Name $script:testId -AsPlainText
@@ -182,7 +182,7 @@ Describe "Edge Cases and Error Conditions" -Tag "EdgeCases" {
             $longUsername = "user" + ("A" * 200)  # 204 character username
             $longCred = [PSCredential]::new($longUsername, $script:testPassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $longCred
+            $result = New-StoredCredential -Name $script:testId -Credential $longCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             $retrieved = Get-StoredCredential -Name $script:testId
@@ -239,7 +239,7 @@ Describe "Diagnostic and Troubleshooting Features" -Tag "Diagnostic" {
             $testId = "VerboseTest_$(Get-Random)"
             
             try {
-                $verboseOutput = New-StoredCredential -Name $testId -Credential $script:testCred -Verbose 4>&1
+                $verboseOutput = New-StoredCredential -Name $testId -Credential $script:testCred -NonInteractive -Verbose 4>&1
                 $verboseOutput | Should -Not -BeNullOrEmpty
             }
             finally {

@@ -206,12 +206,22 @@ function Get-StoredCredential {
                 $convertedCredentials = @()
                 foreach ($cred in $allCredentials) {
                     try {
-                        # Convert legacy format if needed
-                        if ($cred.Credential -and -not $cred.Username) {
+                        # Check for new API structure first
+                        if ($cred.Metadata -and $cred.Metadata['_CredentialStructure'] -eq 'NewAPI') {
+                            Write-Verbose "Using new API format for '$($cred.Name)'"
+                            # Already has the new structure - use it directly or convert from embedded PSCredential
+                            if ($cred.Credential) {
+                                $credentialObject = ConvertTo-CredentialObject -Name $cred.Name -PSCredential $cred.Credential -Metadata $cred.Metadata
+                            } else {
+                                $credentialObject = $cred
+                            }
+                        } elseif ($cred.Credential) {
+                            # Legacy format with PSCredential object
                             Write-Verbose "Converting legacy credential format for '$($cred.Name)'"
                             $credentialObject = ConvertTo-CredentialObject -Name $cred.Name -PSCredential $cred.Credential -Metadata ($cred.Metadata ?? @{})
                         } elseif ($cred.Username -and $cred.Password) {
-                            # Already in new format
+                            # Pure new format (future provider compatibility)
+                            Write-Verbose "Using pure new format for '$($cred.Name)'"
                             $credentialObject = $cred
                         } else {
                             Write-Warning "Skipping credential '$($cred.Name)' - invalid structure"
@@ -219,7 +229,13 @@ function Get-StoredCredential {
                         }
                         
                         # Apply output format
-                        $formattedCred = ConvertFrom-CredentialObject -CredentialObject $credentialObject -AsCredential:$AsCredential -AsPlainText:$AsPlainText
+                        if ($AsCredential) {
+                            $formattedCred = ConvertFrom-CredentialObject -CredentialObject $credentialObject -AsCredential
+                        } elseif ($AsPlainText) {
+                            $formattedCred = ConvertFrom-CredentialObject -CredentialObject $credentialObject -AsPlainText
+                        } else {
+                            $formattedCred = ConvertFrom-CredentialObject -CredentialObject $credentialObject
+                        }
                         $convertedCredentials += $formattedCred
                     }
                     catch {

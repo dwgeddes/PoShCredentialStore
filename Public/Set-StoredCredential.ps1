@@ -96,11 +96,25 @@ function Set-StoredCredential {
             $hasApplication = $PSBoundParameters.ContainsKey('Application')
             
             # Get existing credential first
+            # ASSUMPTION FIXED: Get-StoredCredential with -Force returns failure objects instead of throwing exceptions
             $existingCredential = $null
-            try {
-                $existingCredential = Get-StoredCredential -Name $Name -Force
-            }
-            catch {
+            $credentialExists = $false
+            
+            $getResult = Get-StoredCredential -Name $Name -Force
+            
+            # Check if the result indicates failure (Get-StoredCredential returns failure objects with -Force)
+            if ($getResult -and $getResult.Result -eq "Failed") {
+                $credentialExists = $false
+                if (-not $Force) {
+                    Write-Error "Credential '$Name' does not exist. Use New-StoredCredential to create it first."
+                    return
+                }
+                # With -Force, we'll create it if it doesn't exist - continue processing
+            } elseif ($getResult -and $getResult.Result -ne "Failed") {
+                $existingCredential = $getResult
+                $credentialExists = $true
+            } else {
+                $credentialExists = $false
                 if (-not $Force) {
                     Write-Error "Credential '$Name' does not exist. Use New-StoredCredential to create it first."
                     return
@@ -112,17 +126,17 @@ function Set-StoredCredential {
             
             if ($PSCmdlet.ParameterSetName -eq 'PSCredential' -and $Credential) {
                 # Update with PSCredential
-                $combinedMetadata = if ($existingCredential) { $existingCredential.Metadata.Clone() } else { @{} }
+                $combinedMetadata = if ($credentialExists) { $existingCredential.Metadata.Clone() } else { @{} }
                 $updatedCredentialObject = ConvertTo-CredentialObject -Name $Name -PSCredential $Credential -Metadata $combinedMetadata
             }
             elseif ($PSCmdlet.ParameterSetName -eq 'UsernamePassword') {
                 # Update with Username/Password
-                $combinedMetadata = if ($existingCredential) { $existingCredential.Metadata.Clone() } else { @{} }
+                $combinedMetadata = if ($credentialExists) { $existingCredential.Metadata.Clone() } else { @{} }
                 $updatedCredentialObject = ConvertTo-CredentialObject -Name $Name -Username $Username -SecurePassword $Password -Metadata $combinedMetadata
             }
             elseif ($PSCmdlet.ParameterSetName -eq 'MetadataOnly' -or (-not $Credential -and -not $Username)) {
                 # Metadata-only update
-                if (-not $existingCredential) {
+                if (-not $credentialExists) {
                     Write-Error "Cannot update metadata: credential '$Name' does not exist"
                     return
                 }
@@ -163,27 +177,43 @@ function Set-StoredCredential {
                 }
             }
             
-            # Always update ModifiedDate
-            $updatedCredentialObject.Metadata['ModifiedDate'] = Get-Date
+            # Always update ModifiedDate for updates, set CreatedDate for new credentials
+            if ($credentialExists) {
+                $updatedCredentialObject.Metadata['ModifiedDate'] = Get-Date
+            } else {
+                $updatedCredentialObject.Metadata['CreatedDate'] = Get-Date
+                $updatedCredentialObject.Metadata['ModifiedDate'] = Get-Date
+            }
 
-            if ($PSCmdlet.ShouldProcess($Name, "Update stored credential")) {
-                # Get provider and update
+            if ($PSCmdlet.ShouldProcess($Name, "$(if ($credentialExists) { 'Update' } else { 'Create' }) stored credential")) {
+                # Get provider and call appropriate method
                 $provider = Get-CredentialProvider
                 
                 # Convert to legacy format for provider
                 $legacyCredential = ConvertFrom-CredentialObject -CredentialObject $updatedCredentialObject -AsCredential
                 
-                $updateScript = {
-                    return & $provider.Set $Name $legacyCredential $updatedCredentialObject.Metadata
+                # Call appropriate provider method based on whether credential exists
+                if ($credentialExists) {
+                    $providerMethod = $provider.Set
+                    $operationType = "update"
+                } else {
+                    $providerMethod = $provider.New
+                    $operationType = "create"
                 }
                 
-                $result = Invoke-WithRetry -ScriptBlock $updateScript -MaxRetries 2
+                # Create scriptblock with proper variable capture
+                $scriptBlockWithClosure = {
+                    & $providerMethod $Name $legacyCredential $updatedCredentialObject.Metadata
+                }.GetNewClosure()
+                
+                $result = Invoke-WithRetry -ScriptBlock $scriptBlockWithClosure -MaxRetries 2
                 
                 if ($result) {
-                    Write-Verbose "Updated credential '$Name' with username '$($updatedCredentialObject.Username)'"
+                    $action = if ($operationType -eq "update") { "Updated" } else { "Created" }
+                    Write-Verbose "$action credential '$Name' with username '$($updatedCredentialObject.Username)'"
                     return $updatedCredentialObject
                 } else {
-                    Write-Error "Provider failed to update credential '$Name'"
+                    Write-Error "Provider failed to $operationType credential '$Name'"
                     return
                 }
             }

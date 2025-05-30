@@ -4,6 +4,11 @@
 BeforeAll {
     $ModulePath = Split-Path -Parent $PSScriptRoot
     Import-Module "$ModulePath/PSCredentialStore.psd1" -Force
+    
+    # MANDATORY TIMEOUT PROTECTION: Prevent interactive prompts
+    $global:ConfirmPreference = 'None'
+    Mock Read-Host { return "mocked-input" } -ModuleName PSCredentialStore
+    Mock Write-Progress { } -ModuleName PSCredentialStore
 }
 
 Describe "Advanced Functionality Tests" -Tag "Advanced" {
@@ -21,16 +26,24 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
         # Clean up test credentials
         Remove-StoredCredential -Name $script:testId -Force -ErrorAction SilentlyContinue | Out-Null
         
-        # Clean up any credentials that match our test pattern
-        Get-StoredCredential | Where-Object { $_.Name -like "*AdvancedTest*" } | ForEach-Object {
-            Remove-StoredCredential -Name $_.Name -Force -ErrorAction SilentlyContinue
+        # Clean up any credentials that match our test pattern with timeout protection
+        try {
+            $allCreds = Get-StoredCredential -Force -ErrorAction Stop
+            if ($allCreds -and $allCreds.GetType().Name -eq "Object[]") {
+                $allCreds | Where-Object { $_.Name -like "*AdvancedTest*" } | ForEach-Object {
+                    Remove-StoredCredential -Name $_.Name -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {
+            # Ignore cleanup errors to prevent test hanging
+            Write-Warning "Cleanup failed: $($_.Exception.Message)"
         }
     }
 
     Context "Metadata Handling" {
         It "Should store and retrieve credentials with metadata" -Skip:([bool]$env:CI) {
             # Create credential with metadata
-            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -Description "Test credential" -Url "https://example.com" -Application "TestApp"
+            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -Description "Test credential" -Url "https://example.com" -Application "TestApp" -NonInteractive
             
             $result | Should -Not -BeNullOrEmpty
             $result.Name | Should -Be $script:testId
@@ -43,7 +56,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $complexDescription = "Multi-line`nDescription with`nSpecial characters: !@#$%^&*()"
             $complexUrl = "https://user:pass@example.com:8080/path?query=value#fragment"
             
-            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -Description $complexDescription -Url $complexUrl
+            $result = New-StoredCredential -Name $script:testId -Credential $script:testCred -Description $complexDescription -Url $complexUrl -NonInteractive
             
             $result | Should -Not -BeNullOrEmpty
             $result.Description | Should -Be $complexDescription
@@ -52,7 +65,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
 
         It "Should update metadata without affecting credentials" -Skip:([bool]$env:CI) {
             # Create initial credential
-            New-StoredCredential -Name $script:testId -Credential $script:testCred -Description "Original" | Out-Null
+            New-StoredCredential -Name $script:testId -Credential $script:testCred -Description "Original" -NonInteractive | Out-Null
             
             # Update metadata
             $result = Set-StoredCredential -Name $script:testId -Credential $script:testCred -Description "Updated"
@@ -67,7 +80,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $longName = "VeryLongCredentialName_" + ("x" * 100) + "_$(Get-Random)"
             
             try {
-                $result = New-StoredCredential -Name $longName -Credential $script:testCred
+                $result = New-StoredCredential -Name $longName -Credential $script:testCred -NonInteractive
                 $result | Should -Not -BeNullOrEmpty
                 $result.Name | Should -Be $longName
                 
@@ -85,7 +98,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $longPasswordSecure = ConvertTo-SecureString $longPassword -AsPlainText -Force
             $longPasswordCred = [PSCredential]::new($script:testUser, $longPasswordSecure)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $longPasswordCred
+            $result = New-StoredCredential -Name $script:testId -Credential $longPasswordCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             # Verify plain text retrieval works with long passwords
@@ -98,7 +111,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $longUsername = "user_" + ("x" * 200) + "@example.com"
             $longUserCred = [PSCredential]::new($longUsername, $script:testPassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $longUserCred
+            $result = New-StoredCredential -Name $script:testId -Credential $longUserCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             $result.UserName | Should -Be $longUsername
             
@@ -111,7 +124,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $emptyPassword = ConvertTo-SecureString "" -AsPlainText -Force
             $emptyCred = [PSCredential]::new($script:testUser, $emptyPassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $emptyCred
+            $result = New-StoredCredential -Name $script:testId -Credential $emptyCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             # Verify empty password retrieval
@@ -125,7 +138,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $unicodeUser = "用户名@тест.com"
             $unicodeCred = [PSCredential]::new($unicodeUser, $script:testPassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $unicodeCred
+            $result = New-StoredCredential -Name $script:testId -Credential $unicodeCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             $result.UserName | Should -Be $unicodeUser
             
@@ -138,7 +151,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $unicodePassword = ConvertTo-SecureString "密码🔐тест123" -AsPlainText -Force
             $unicodeCred = [PSCredential]::new($script:testUser, $unicodePassword)
             
-            $result = New-StoredCredential -Name $script:testId -Credential $unicodeCred
+            $result = New-StoredCredential -Name $script:testId -Credential $unicodeCred -NonInteractive
             $result | Should -Not -BeNullOrEmpty
             
             # Verify Unicode password retrieval
@@ -150,7 +163,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
             $unicodeName = "测试凭据_🔐_тест_$(Get-Random)"
             
             try {
-                $result = New-StoredCredential -Name $unicodeName -Credential $script:testCred
+                $result = New-StoredCredential -Name $unicodeName -Credential $script:testCred -NonInteractive
                 $result | Should -Not -BeNullOrEmpty
                 $result.Name | Should -Be $unicodeName
                 
@@ -167,12 +180,12 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
     Context "Security and Validation" {
         It "Should validate input parameters properly" {
             # Test null/empty validations
-            { New-StoredCredential -Name "" -Credential $script:testCred } | Should -Throw
-            { New-StoredCredential -Name $script:testId -Credential $null } | Should -Throw
+            { New-StoredCredential -Name "" -Credential $script:testCred -NonInteractive } | Should -Throw
+            { New-StoredCredential -Name $script:testId -Credential $null -NonInteractive } | Should -Throw
         }
 
         It "Should maintain credential security during operations" {
-            New-StoredCredential -Name $script:testId -Credential $script:testCred | Out-Null
+            New-StoredCredential -Name $script:testId -Credential $script:testCred -NonInteractive | Out-Null
             
             # Multiple retrieval operations should not affect security
             for ($i = 0; $i -lt 5; $i++) {
@@ -183,7 +196,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
         }
 
         It "Should handle concurrent access safely" {
-            New-StoredCredential -Name $script:testId -Credential $script:testCred | Out-Null
+            New-StoredCredential -Name $script:testId -Credential $script:testCred -NonInteractive | Out-Null
             
             # Simulate concurrent operations
             $jobs = @()
@@ -211,7 +224,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
         It "Should provide meaningful error messages" {
             # Test various error conditions and verify error messages are helpful
             try {
-                New-StoredCredential -Name "" -Credential $script:testCred
+                New-StoredCredential -Name "" -Credential $script:testCred -NonInteractive
                 throw "Should have thrown an error"
             }
             catch {
@@ -231,7 +244,7 @@ Describe "Advanced Functionality Tests" -Tag "Advanced" {
                     $id = "ResourceTest_$i_$(Get-Random)"
                     $credentials += $id
                     $cred = [PSCredential]::new("user$i", (ConvertTo-SecureString "Pass$i!" -AsPlainText -Force))
-                    New-StoredCredential -Name $id -Credential $cred | Out-Null
+                    New-StoredCredential -Name $id -Credential $cred -NonInteractive | Out-Null
                 }
                 
                 # Verify they all exist

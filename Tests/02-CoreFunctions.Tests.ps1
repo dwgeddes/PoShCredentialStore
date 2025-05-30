@@ -48,8 +48,8 @@ Describe "Core CRUD Operations" -Tag "Unit" {
             
             $result = Get-StoredCredential -Name $script:testId
             $result | Should -Not -BeNullOrEmpty
-            $result.UserName | Should -Be $script:testUser
-            $result.Credential | Should -BeOfType [PSCredential]
+            $result.Username | Should -Be $script:testUser
+            $result.Password | Should -BeOfType [SecureString]
         }
 
         It "Should throw error for non-existent credential" {
@@ -113,7 +113,7 @@ Describe "Core CRUD Operations" -Tag "Unit" {
         }
 
         It "Should create credential if it doesn't exist" {
-            $result = Set-StoredCredential -Name $script:testId -Credential $script:testCred
+            $result = Set-StoredCredential -Name $script:testId -Credential $script:testCred -Force
             $result | Should -Not -BeNullOrEmpty
             $result.Name | Should -Be $script:testId
         }

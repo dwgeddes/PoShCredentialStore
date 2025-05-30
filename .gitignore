@@ -1,1 +1,73 @@
 .github/
+
+# PowerShell specific
+*.ps1xml
+*_profile.ps1
+
+# Credential files - NEVER commit these
+*.cred
+credential-store/
+.poshcredentialstore/
+
+# Build artifacts
+bin/
+obj/
+publish/
+*.nupkg
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+
+# IDE files
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs (but preserve performance tracking)
+Logs/*.log
+Logs/debug-*.json
+!Logs/performance-*.json
+!Logs/CHANGELOG.md
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Sensitive test data
+test-credentials.*
+test-secrets.*
+
+# Local configuration
+local.config
+user.settings
+
+# Non-standard PowerShell module directories (REMOVED)
+Tools/
+
+# Obsolete validation scripts (moved to Tests/)
+ComprehensiveValidation.ps1
+QuickValidation.ps1
+RunValidation.ps1
+ValidationScript.ps1
+
+# Package files
+*.zip
+*.tar.gz
+
+# Documentation generation
+docs/_site/
+docs/.jekyll-cache/
