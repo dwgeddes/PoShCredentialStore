@@ -40,7 +40,7 @@ function Get-MacOSKeychainItem {
         
         $Username = $keychainItem.UserName
         # Use wrapper function to get password
-        $securePassword = Get-KeyChainPassword -Name $serviceName -Username $Username | ConvertTo-SecureString -AsPlainText
+        $securePassword = Get-KeyChainPassword -Name $keychainItem.Name -Username $keychainItem.UserName
         
         # Return standardized credential object
         $objParams = @{
