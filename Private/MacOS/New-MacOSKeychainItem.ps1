@@ -34,7 +34,7 @@ function New-MacOSKeychainItem {
         Set-KeyChainEntry -Username $Username -Name $serviceName -Password $Password -Comment $Comment -Description 'PoShCredential'
         
         # Get final password for return object
-        $finalPassword = Get-KeyChainPassword -Name $serviceName -Username $Username | ConvertTo-SecureString -AsPlainText
+        $finalPassword = Get-KeyChainPassword -Name $serviceName -Username $Username
         
         # Return standardized credential object
         $objParams = @{
