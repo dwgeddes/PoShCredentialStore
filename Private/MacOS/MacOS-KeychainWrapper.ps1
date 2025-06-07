@@ -236,7 +236,7 @@ function Get-KeychainPassword {
         if ($passwordPlain -is [array]) {
             $passwordPlain = $passwordPlain -join ''
         }
-        $passwordPlain = $passwordPlain.Trim()
+        $passwordPlain = ([string]$passwordPlain).Trim()
         
         # Convert plain text password to SecureString
         if ([string]::IsNullOrEmpty($passwordPlain)) {
